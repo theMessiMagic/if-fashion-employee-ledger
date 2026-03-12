@@ -12,10 +12,6 @@ env/
 # Environment variables
 .env
 
-# Database (optional)
-*.db
-*.sqlite3
-
 # VS Code settings
 .vscode/
 
