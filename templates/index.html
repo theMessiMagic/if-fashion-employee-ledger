@@ -2,20 +2,39 @@
 <html lang="en">
 <head>
     <script src="https://cdn.tailwindcss.com"></script>
-    <title>Ledger v24</title>
+    <title>Employee Ledger</title>
 </head>
 <body class="bg-slate-100 p-8 font-sans">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2">
+        {% for message in messages %}
+          <div class="bg-slate-800 text-white px-8 py-3 rounded-full shadow-2xl font-bold border-2 border-slate-600 toast">{{ message }}</div>
+        {% endfor %}
+        </div>
+        <script>setTimeout(() => { document.querySelectorAll('.toast').forEach(el => el.remove()); }, 3000);</script>
+      {% endif %}
+    {% endwith %}
+
     <div class="max-w-4xl mx-auto">
         <h1 class="text-4xl font-black mb-6 text-center text-slate-800 uppercase italic">Ledger <span class="text-blue-600 underline">v24</span></h1>
         
-        <form action="/add_labour" method="POST" class="bg-white p-6 rounded-2xl shadow-xl mb-8 flex gap-4 border-b-8 border-blue-600">
-            <input type="text" name="name" placeholder="NAME" class="flex-1 border-2 p-3 rounded-xl uppercase font-bold outline-none" required>
+        <div class="flex justify-between items-center mb-6 bg-white p-4 rounded-xl shadow border">
+            <input type="text" id="searchInput" placeholder="🔍 Search Labour Name..." class="border-2 p-2 rounded-lg w-1/2 font-bold outline-none border-slate-300 focus:border-blue-500" onkeyup="filterLabours()">
+            <a href="/bulk_print?m={{current_m_y}}" target="_blank" class="bg-slate-800 text-white px-6 py-2 rounded-lg font-bold hover:bg-black uppercase text-sm shadow flex items-center gap-2">
+                🖨️ Bulk Print ({{current_m_y}})
+            </a>
+        </div>
+
+        <form action="/add_labour" method="POST" class="bg-white p-6 rounded-2xl shadow-xl mb-8 flex gap-4 border-b-8 border-blue-600 flex-wrap">
+            <input type="text" name="name" placeholder="NAME" class="flex-1 border-2 p-3 rounded-xl uppercase font-bold outline-none min-w-[200px]" required>
+            <input type="number" name="wage" placeholder="WAGE/DUTY (₹)" class="w-40 border-2 p-3 rounded-xl font-bold outline-none" required>
             <select name="group" class="border-2 p-3 rounded-xl font-bold">
                 <option value="A">Group A</option>
                 <option value="B">Group B</option>
             </select>
             <select name="mc" class="border-2 p-3 rounded-xl font-bold">
-                {% for i in range(1, 5) %}<option value="{{i}}">{{i}}</option>{% endfor %}
+                {% for i in range(1, 10) %}<option value="{{i}}">{{i}}</option>{% endfor %}
             </select>
             <button class="bg-blue-600 text-white px-8 rounded-xl font-bold hover:bg-blue-700">ADD</button>
         </form>
@@ -24,15 +43,75 @@
             {% for g in ['A', 'B'] %}
             <div>
                 <h2 class="text-xl font-black mb-4 {{'text-blue-600' if g=='A' else 'text-red-600'}} underline uppercase text-center font-bold">GROUP {{g}}</h2>
-                {% for l in labours if l.group == g %}
-                <div class="bg-white p-4 rounded-xl shadow mb-3 flex justify-between items-center border-r-4 {{'border-blue-400' if g=='A' else 'border-red-400'}} hover:scale-105 transition-all">
-                    <a href="/notebook/{{l.id}}" class="font-bold text-slate-700 flex-1 uppercase tracking-tight">👤 {{l.name}} <span class="text-xs text-slate-400 ml-2 font-mono">MC:{{l.home_mc}}</span></a>
-                    <a href="/delete_labour/{{l.id}}" class="text-red-200" onclick="return confirm('Delete?')">🗑️</a>
+                <div id="group-{{g}}">
+                    {% for l in labours if l.group == g %}
+                    <div class="labour-card bg-white p-4 rounded-xl shadow mb-3 flex justify-between items-center border-r-4 {{'border-blue-400' if g=='A' else 'border-red-400'}} hover:scale-105 transition-all" data-name="{{l.name}}">
+                        
+                        <div class="flex flex-col flex-1">
+                            <a href="/notebook/{{l.id}}" class="font-bold text-slate-700 uppercase tracking-tight">👤 {{l.name}}</a>
+                            <span class="text-[10px] text-slate-400 font-mono mt-1">MC:{{l.home_mc}}</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-3">
+                            {% if l.wage_rate == 0 %}
+                                <form action="/update_wage/{{l.id}}" method="POST" class="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-300">
+                                    <span class="text-xs font-bold text-slate-500 ml-1 mr-1">₹</span>
+                                    <input type="number" name="wage" placeholder="0" class="w-16 text-sm font-black text-amber-600 bg-transparent outline-none text-center" required>
+                                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-[10px] px-2 py-1 rounded font-bold shadow cursor-pointer ml-1">SET</button>
+                                </form>
+                            {% else %}
+                                <div class="flex flex-col items-end">
+                                    <span class="text-sm font-black text-green-700 bg-green-100 px-2 py-1 rounded-md border border-green-300 shadow-sm cursor-not-allowed" title="Wage is Locked">₹{{l.wage_rate}} 🔒</span>
+                                    
+                                    {% if l.last_increment_month != current_m_y %}
+                                        <button onclick="requestIncrement('{{l.id}}', '{{l.wage_rate}}', '{{l.name}}')" class="text-[10px] bg-amber-500 hover:bg-amber-600 text-white px-2 py-1 rounded mt-1 font-bold shadow transition-all uppercase">⬆️ Increment</button>                                    {% else %}
+                                        <span class="text-[9px] text-slate-400 font-bold mt-1 uppercase italic">Incremented this mo.</span>
+                                    {% endif %}
+                                </div>
+
+                                <form id="inc-form-{{l.id}}" action="/increment_wage/{{l.id}}" method="POST" class="hidden">
+                                    <input type="hidden" name="password" id="inc-pass-{{l.id}}">
+                                    <input type="hidden" name="add_wage" id="inc-wage-{{l.id}}">
+                                </form>
+                            {% endif %}
+                            
+                            <a href="/delete_labour/{{l.id}}" class="text-red-200 hover:text-red-600 text-lg transition-colors ml-2" onclick="return confirm('Delete?')">🗑️</a>
+                        </div>
+                    </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
             </div>
             {% endfor %}
         </div>
     </div>
+
+    <script>
+        function filterLabours() {
+            let input = document.getElementById('searchInput').value.toUpperCase();
+            let cards = document.querySelectorAll('.labour-card');
+            cards.forEach(card => {
+                let name = card.getAttribute('data-name');
+                if (name.includes(input)) card.style.display = "flex";
+                else card.style.display = "none";
+            });
+        }
+
+        // Script to handle password and increment popup safely
+        function requestIncrement(id, currentWage, name) {
+            let pass = prompt("🔒 Enter Admin Password to unlock Increment for " + name + ":");
+            if (pass) {
+                let addAmt = prompt("Current Wage is ₹" + currentWage + ".\n\nHow much do you want to ADD to their salary? (e.g. 100)");
+                if (addAmt && !isNaN(addAmt) && parseInt(addAmt) > 0) {
+                    if (confirm("Are you sure you want to increase " + name + "'s wage by ₹" + addAmt + "?")) {
+                        document.getElementById('inc-pass-' + id).value = pass;
+                        document.getElementById('inc-wage-' + id).value = addAmt;
+                        document.getElementById('inc-form-' + id).submit();
+                    }
+                } else if (addAmt) {
+                    alert("⚠️ Please enter a valid number greater than 0.");
+                }
+            }
+        }
+    </script>
 </body>
 </html>

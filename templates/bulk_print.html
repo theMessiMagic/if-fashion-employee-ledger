@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Bulk Print {{m_y}}</title>
+    <style>
+        body { font-size: 10px !important; background-color: white !important; margin: 0 !important; padding: 0 !important; }
+        td, th { padding: 2px 4px !important; line-height: 1 !important; }
+        .bg-slate-800 { background-color: #1e293b !important; color: white !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        .bg-slate-700\/50 { background-color: #334155 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+        table { page-break-inside: auto; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+        
+        /* THE MAGIC TRICK: Force every worker to start on a new sheet of paper */
+        .page-break { page-break-after: always; }
+        
+        @media screen {
+            .page-break { border-bottom: 8px dashed #cbd5e1; margin-bottom: 20px; padding-bottom: 20px; }
+        }
+    </style>
+</head>
+<body class="font-sans">
+    <div class="fixed top-4 right-4 no-print bg-white p-4 shadow-xl rounded border border-slate-300 z-50">
+        <button onclick="window.print()" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-black shadow hover:bg-blue-700 uppercase">🖨️ PRINT ALL SLIPS</button>
+    </div>
+
+    {% for data in all_data %}
+        {% set labour = data.labour %}
+        {% set entries = data.entries %}
+        
+        <div class="max-w-4xl mx-auto p-4 page-break">
+            <div class="flex justify-between items-center mb-2 bg-white p-2 border-l-4 border-slate-800">
+                <div>
+                    <h2 class="font-black text-slate-800 uppercase italic text-xl">{{labour.name}}</h2>
+                    <p class="text-xs font-mono text-slate-500 uppercase">Machine No: {{labour.home_mc}} | Group: {{labour.group}} | Month: {{m_y}}</p>
+                </div>
+            </div>
+
+            <table class="w-full text-center border-collapse text-sm border">
+                <tr class="bg-slate-800 text-white text-[10px] uppercase tracking-widest font-mono">
+                    <th class="p-2 border">Day</th><th class="border">Shift</th><th class="border">MC</th><th class="border">Stitch</th><th class="border">Duty</th><th class="border">Hrs</th><th class="border">Adv</th>
+                </tr>
+                {% for r in entries %}
+                <tr class="border-b">
+                    <td class="p-1 font-black {{'text-slate-800 underline' if r.day_name=='Sun' else 'text-slate-500'}} border">{{r.day_number}} {{r.day_name}}</td>
+                    <td class="border">{{r.shift}}</td>
+                    <td class="border">{{r.mc_no}}</td>
+                    <td class="border font-black">{{r.stitch if r.stitch > 0 else ''}}</td>
+                    <td class="border font-black">{{r.duty}}</td>
+                    <td class="border">{{r.hours if r.hours != 'FULL' else ''}}</td>
+                    <td class="border font-bold">{{r.advance if r.advance > 0 else ''}}</td>
+                </tr>
+                {% endfor %}
+            </table>
+
+            {% set total_advance = namespace(value=0) %}
+            {% set max_duty = namespace(value=0) %}
+            {% for r in entries %}
+                {% set total_advance.value = total_advance.value + (r.advance | int) %}
+                {% if r.duty.isdigit() and r.duty | int > max_duty.value %}
+                    {% set max_duty.value = r.duty | int %}
+                {% endif %}
+            {% endfor %}
+
+            <div class="mt-2 grid grid-cols-4 gap-2 text-center border p-2 bg-slate-100">
+                <div><p class="text-[10px] font-bold">Total Duties</p><p class="text-sm font-black">{{ max_duty.value }}</p></div>
+                <div><p class="text-[10px] font-bold">Gross Salary (₹{{labour.wage_rate}})</p><p class="text-sm font-black">₹{{ max_duty.value * labour.wage_rate }}</p></div>
+                <div><p class="text-[10px] font-bold">Advance Given</p><p class="text-sm font-black">₹{{ total_advance.value }}</p></div>
+                <div class="bg-slate-800 text-white p-1 rounded"><p class="text-[10px] font-bold">Balance Due</p><p class="text-sm font-black">₹{{ (max_duty.value * labour.wage_rate) - total_advance.value }}</p></div>
+            </div>
+        </div>
+    {% endfor %}
+</body>
+</html>

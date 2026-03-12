@@ -1,17 +1,34 @@
 from flask import Flask, render_template, request, redirect, url_for, flash
 from datetime import datetime, date
 import calendar
-from models import Session, Labour, DailyEntry, get_mirrored_shift
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from models import Session, Labour, DailyEntry, get_mirrored_shift, engine
 
 app = Flask(__name__)
 app.secret_key = "factory_fix_v24"
+
+# CHANGE YOUR PASSWORD HERE
+ADMIN_PASSWORD = "admin" 
+
+# NEW FEATURE SAFETY: Auto-add columns to existing DB safely
+with engine.connect() as conn:
+    try:
+        conn.execute(text("ALTER TABLE labours ADD COLUMN wage_rate INTEGER DEFAULT 0"))
+        conn.commit()
+    except: pass
+    try:
+        conn.execute(text("ALTER TABLE labours ADD COLUMN last_increment_month TEXT DEFAULT ''"))
+        conn.commit()
+    except: pass
 
 @app.route('/')
 def index():
     s = Session()
     labours = s.query(Labour).all()
+    current_m_y = datetime.now().strftime("%m-%Y")
     s.close()
-    return render_template('index.html', labours=labours)
+    return render_template('index.html', labours=labours, current_m_y=current_m_y)
 
 @app.route('/notebook/<int:lid>')
 def notebook(lid):
@@ -20,27 +37,32 @@ def notebook(lid):
     if not labour: return redirect('/')
     
     now = datetime.now()
-    m_y = now.strftime("%m-%Y")
-    current_day = now.day # This is the "today" marker
+    m_y = request.args.get('m', now.strftime("%m-%Y"))
+    req_month, req_year = map(int, m_y.split('-'))
     
-    days_count = calendar.monthrange(now.year, now.month)[1]
+    is_current_month = (m_y == now.strftime("%m-%Y"))
+    if is_current_month: current_day = now.day 
+    else: current_day = 32 if date(req_year, req_month, 1) < now.date() else 0
     
-    # 1. Automatic Entry Creation (Same as before)
+    days_count = calendar.monthrange(req_year, req_month)[1]
+    
     for d in range(1, days_count + 1):
         exists = s.query(DailyEntry).filter_by(labour_id=lid, day_number=d, month_year=m_y).first()
         if not exists:
-            s.add(DailyEntry(labour_id=lid, day_number=d, day_name=date(now.year, now.month, d).strftime("%a"), 
+            s.add(DailyEntry(labour_id=lid, day_number=d, day_name=date(req_year, req_month, d).strftime("%a"), 
                              month_year=m_y, shift=get_mirrored_shift(labour.group, d, m_y), mc_no=labour.home_mc))
         elif exists.manual_shift == 0:
             exists.shift = get_mirrored_shift(labour.group, d, m_y)
     s.commit()
     
-    # 2. Fetch all entries for the page
     entries = s.query(DailyEntry).filter_by(labour_id=lid, month_year=m_y).order_by(DailyEntry.day_number).all()
-    s.close()
     
-    # 3. IMPORTANT: Pass 'now_day' so the HTML knows where to show the EDIT button
-    return render_template('notebook.html', labour=labour, entries=entries, now_day=current_day)
+    available_months = [e[0] for e in s.query(DailyEntry.month_year).filter_by(labour_id=lid).distinct().all()]
+    if m_y not in available_months: available_months.append(m_y)
+    available_months.sort(key=lambda x: datetime.strptime(x, "%m-%Y"), reverse=True)
+    
+    s.close()
+    return render_template('notebook.html', labour=labour, entries=entries, now_day=current_day, available_months=available_months, current_m_y=m_y)
 
 @app.route('/update/<int:eid>', methods=['POST'])
 def update(eid):
@@ -50,7 +72,6 @@ def update(eid):
         if e is None: return redirect('/')
         lab = s.query(Labour).get(e.labour_id)
         
-        # 1. Save the data you just typed
         if request.form['shift'] != e.shift: e.manual_shift = 1
         e.shift, e.mc_no = request.form['shift'], request.form['mc']
         e.stitch = int(request.form['stitch'] or 0)
@@ -58,38 +79,38 @@ def update(eid):
         e.hours = request.form['hours']
         s.commit() 
 
-        # 2. Get all entries for the worker THIS month
         now_day = datetime.now().day
-        all_entries = s.query(DailyEntry).filter_by(
-            labour_id=lab.id, 
-            month_year=e.month_year
-        ).order_by(DailyEntry.day_number).all()
+        is_current_month = (e.month_year == datetime.now().strftime("%m-%Y"))
+        check_day = now_day if is_current_month else 32
 
-        # 3. The "Auto-Push" Brain
+        all_entries = s.query(DailyEntry).filter_by(labour_id=lab.id, month_year=e.month_year).order_by(DailyEntry.day_number).all()
+
         running_duty_count = 0
         for entry in all_entries:
-            # RULE: If there are stitches, it's a duty (unless it's a 'CHANGE' shift)
             if entry.stitch > 0 and entry.shift != "CHANGE":
                 running_duty_count += 1
                 entry.duty = str(running_duty_count)
             else:
-                # If no stitches, check if the day has already passed
-                if entry.day_number <= now_day:
-                    entry.duty = "X" # Past/Today empty = Absent
-                else:
-                    entry.duty = ""  # Future empty = Blank
+                if entry.day_number <= check_day: entry.duty = "X" 
+                else: entry.duty = ""  
         
         s.commit() 
         flash(f"Updated: {lab.name}")
         
     finally: s.close()
-    return redirect(url_for('notebook', lid=e.labour_id))
+    return redirect(url_for('notebook', lid=e.labour_id, m=e.month_year))
+
 @app.route('/add_labour', methods=['POST'])
 def add_labour():
     s = Session()
     try:
-        s.add(Labour(name=request.form['name'].upper(), group=request.form['group'], home_mc=request.form['mc']))
+        wage = int(request.form.get('wage', 0) or 0) 
+        s.add(Labour(name=request.form['name'].upper(), group=request.form['group'], home_mc=request.form['mc'], wage_rate=wage))
         s.commit()
+        flash(f"Added worker: {request.form['name'].upper()}")
+    except IntegrityError:
+        s.rollback()
+        flash(f"Error: A worker named {request.form['name'].upper()} already exists!")
     finally: s.close()
     return redirect('/')
 
@@ -99,6 +120,67 @@ def delete_labour(lid):
     try:
         s.query(DailyEntry).filter_by(labour_id=lid).delete()
         lab = s.query(Labour).get(lid); s.delete(lab); s.commit()
+    finally: s.close()
+    return redirect('/')
+
+@app.route('/bulk_print')
+def bulk_print():
+    s = Session()
+    now = datetime.now()
+    m_y = request.args.get('m', now.strftime("%m-%Y"))
+    req_month, req_year = map(int, m_y.split('-'))
+    
+    labours = s.query(Labour).order_by(Labour.group, Labour.name).all()
+    all_data = []
+    
+    for labour in labours:
+        days_count = calendar.monthrange(req_year, req_month)[1]
+        for d in range(1, days_count + 1):
+            exists = s.query(DailyEntry).filter_by(labour_id=labour.id, day_number=d, month_year=m_y).first()
+            if not exists:
+                s.add(DailyEntry(labour_id=labour.id, day_number=d, day_name=date(req_year, req_month, d).strftime("%a"), 
+                                 month_year=m_y, shift=get_mirrored_shift(labour.group, d, m_y), mc_no=labour.home_mc))
+        s.commit()
+        entries = s.query(DailyEntry).filter_by(labour_id=labour.id, month_year=m_y).order_by(DailyEntry.day_number).all()
+        all_data.append({'labour': labour, 'entries': entries})
+        
+    s.close()
+    return render_template('bulk_print.html', all_data=all_data, m_y=m_y)
+
+@app.route('/update_wage/<int:lid>', methods=['POST'])
+def update_wage(lid):
+    s = Session()
+    try:
+        lab = s.query(Labour).get(lid)
+        if lab and lab.wage_rate == 0:  # Only allow if it's currently 0 (unlocked)
+            lab.wage_rate = int(request.form.get('wage', 0))
+            s.commit()
+            flash(f"Initial Wage Locked for {lab.name}")
+    finally: s.close()
+    return redirect('/')
+
+# NEW FEATURE: Password Protected Monthly Increment
+@app.route('/increment_wage/<int:lid>', methods=['POST'])
+def increment_wage(lid):
+    s = Session()
+    try:
+        password = request.form.get('password')
+        added_amount = int(request.form.get('add_wage', 0))
+        
+        if password != ADMIN_PASSWORD:
+            flash("❌ Incorrect Admin Password!")
+            return redirect('/')
+            
+        lab = s.query(Labour).get(lid)
+        current_month = datetime.now().strftime("%m-%Y")
+        
+        if lab and lab.last_increment_month != current_month:
+            lab.wage_rate += added_amount
+            lab.last_increment_month = current_month
+            s.commit()
+            flash(f"✅ Incremented wage for {lab.name}. New Wage: ₹{lab.wage_rate}")
+        else:
+            flash(f"⚠️ {lab.name} already received an increment this month!")
     finally: s.close()
     return redirect('/')
 

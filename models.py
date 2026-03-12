@@ -12,6 +12,8 @@ class Labour(Base):
     name = Column(String, unique=True)
     group = Column(String) 
     home_mc = Column(String)
+    wage_rate = Column(Integer, default=0) 
+    last_increment_month = Column(String, default="") # NEW FEATURE: Tracks monthly increment
 
 class DailyEntry(Base):
     __tablename__ = 'entries'

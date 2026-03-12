@@ -5,47 +5,15 @@
     <title>{{labour.name}} Notebook</title>
     <style>
         @media print {
-            /* Hide UI elements */
-            .no-print, button, form > div > button, .toast, a {
-                display: none !important;
-            }
-            
-            /* Force everything onto one page */
-            html, body {
-                height: auto;
-                font-size: 10px !important;
-                background-color: white !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-
-            /* Shrink table rows */
-            td, th {
-                padding: 2px 4px !important;
-                line-height: 1 !important;
-            }
-            
-            /* Color Fixes for PDF */
-            .bg-slate-800 { 
-                background-color: #1e293b !important; 
-                color: white !important; 
-                print-color-adjust: exact; 
-                -webkit-print-color-adjust: exact; 
-            }
-            
-            .bg-slate-700\/50 { 
-                background-color: #334155 !important; 
-                print-color-adjust: exact;
-                -webkit-print-color-adjust: exact; 
-            }
-
+            .no-print, button, form > div > button, .toast, a { display: none !important; }
+            html, body { height: auto; font-size: 10px !important; background-color: white !important; margin: 0 !important; padding: 0 !important; }
+            td, th { padding: 2px 4px !important; line-height: 1 !important; }
+            .bg-slate-800 { background-color: #1e293b !important; color: white !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+            .bg-slate-700\/50 { background-color: #334155 !important; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
             .mt-6 { margin-top: 10px !important; }
             .p-6 { padding: 10px !important; }
             .text-2xl { font-size: 18px !important; }
-
-            /* Standard properties to clear VS Code warnings */
             .shadow-xl, .shadow-2xl { box-shadow: none !important; }
-            
             table { page-break-inside: auto; }
             tr { page-break-inside: avoid; page-break-after: auto; }
         }
@@ -65,8 +33,22 @@
         <div class="flex justify-between items-center mb-4 bg-white p-4 rounded-2xl shadow border-l-8 border-blue-600">
             <div>
                 <h2 class="font-black text-slate-800 uppercase italic text-2xl">{{labour.name}}</h2>
-                <p class="text-xs font-mono text-slate-500 uppercase">Machine No: {{labour.home_mc}} | Group: {{labour.group}}</p>
+                <p class="text-xs font-mono text-slate-500 uppercase">Machine No: {{labour.home_mc}} | Group: {{labour.group}} | Rate: ₹{{labour.wage_rate}}/Duty</p>
             </div>
+            
+            <div class="no-print bg-slate-100 px-4 py-2 rounded-lg border flex items-center">
+                <span class="text-xs font-bold text-slate-500 mr-2">MONTH:</span>
+                <select onchange="window.location.href='/notebook/{{labour.id}}?m=' + this.value" class="font-bold bg-transparent outline-none cursor-pointer">
+                    {% for m in available_months %}
+                        <option value="{{m}}" {{ 'selected' if m == current_m_y }}>{{m}}</option>
+                    {% endfor %}
+                </select>
+                
+                <button onclick="loadCustomMonth()" class="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 border border-indigo-300 text-[10px] font-black px-2 py-1 rounded ml-3 uppercase shadow-sm transition-colors">
+                    ➕ Add Past Month
+                </button>
+            </div>
+
             <div class="flex gap-2 no-print">
                 <button onclick="window.print()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow hover:bg-blue-700 uppercase flex items-center gap-2">
                     🖨️ Print Slip
@@ -128,7 +110,7 @@
 
         <div class="mt-6 mb-10">
             <div class="bg-slate-800 rounded-2xl p-6 shadow-2xl border-t-4 border-blue-500">
-                <h3 class="text-white font-black uppercase italic mb-4 tracking-widest text-sm text-center underline decoration-blue-500">Monthly Summary ({{entries[0].month_year}})</h3>
+                <h3 class="text-white font-black uppercase italic mb-4 tracking-widest text-sm text-center underline decoration-blue-500">Monthly Summary ({{current_m_y}})</h3>
                 
                 {% set total_stitch = namespace(value=0) %}
                 {% set total_advance = namespace(value=0) %}
@@ -144,22 +126,30 @@
                     {% endif %}
                 {% endfor %}
 
-                <div class="grid grid-cols-3 gap-4 text-center">
+                <div class="grid grid-cols-5 gap-4 text-center">
                     <div class="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
                         <p class="text-slate-400 text-[10px] font-bold uppercase">Total Stitches</p>
-                        <p class="text-blue-400 text-2xl font-black">{{ "{:,}".format(total_stitch.value) }}</p>
+                        <p class="text-blue-400 text-xl font-black">{{ "{:,}".format(total_stitch.value) }}</p>
                     </div>
                     <div class="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
                         <p class="text-slate-400 text-[10px] font-bold uppercase">Total Duties</p>
-                        <p class="text-green-400 text-2xl font-black">{{ max_duty.value }}</p>
+                        <p class="text-green-400 text-xl font-black">{{ max_duty.value }}</p>
                     </div>
                     <div class="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
-                        <p class="text-slate-400 text-[10px] font-bold uppercase">Total Advance</p>
-                        <p class="text-red-400 text-2xl font-black">₹ {{ "{:,}".format(total_advance.value) }}</p>
+                        <p class="text-slate-400 text-[10px] font-bold uppercase">Gross Salary</p>
+                        <p class="text-amber-400 text-xl font-black">₹ {{ "{:,}".format(max_duty.value * labour.wage_rate) }}</p>
+                    </div>
+                    <div class="bg-slate-700/50 p-4 rounded-xl border border-slate-600">
+                        <p class="text-slate-400 text-[10px] font-bold uppercase">- Advance</p>
+                        <p class="text-red-400 text-xl font-black">₹ {{ "{:,}".format(total_advance.value) }}</p>
+                    </div>
+                    <div class="bg-slate-800 p-4 rounded-xl border-2 border-green-500 shadow-lg scale-110 z-10">
+                        <p class="text-white text-[10px] font-bold uppercase">Net Balance Due</p>
+                        <p class="text-green-500 text-2xl font-black">₹ {{ "{:,}".format((max_duty.value * labour.wage_rate) - total_advance.value) }}</p>
                     </div>
                 </div>
             </div>
-            <p class="text-[10px] text-slate-400 mt-4 italic text-center no-print">Note: Printed slips will only show current month records.</p>
+            <p class="text-[10px] text-slate-400 mt-4 italic text-center no-print">Note: Printed slips will only show selected month records.</p>
         </div>
     </div>
 
@@ -175,6 +165,18 @@
             document.getElementById('save-btn-' + id).classList.remove('hidden');
             const sInput = document.querySelector(`#form-${id} input[name="stitch"]`);
             if(sInput) sInput.focus();
+        }
+
+        function loadCustomMonth() {
+            let userMonth = prompt("Enter the past month and year you want to add (Format: MM-YYYY)\nExample: 12-2023 or 01-2024");
+            if (userMonth) {
+                // Ensure format is exactly 2 digits, dash, 4 digits
+                if (/^\d{2}-\d{4}$/.test(userMonth)) {
+                    window.location.href = '/notebook/{{labour.id}}?m=' + userMonth;
+                } else {
+                    alert("⚠️ Invalid format! Please type it exactly like MM-YYYY (for example: 02-2024).");
+                }
+            }
         }
     </script>
 </body>
