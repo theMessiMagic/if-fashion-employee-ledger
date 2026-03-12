@@ -13,7 +13,8 @@ class Labour(Base):
     group = Column(String) 
     home_mc = Column(String)
     wage_rate = Column(Integer, default=0) 
-    last_increment_month = Column(String, default="") # NEW FEATURE: Tracks monthly increment
+    last_increment_month = Column(String, default="") 
+    is_active = Column(Integer, default=1) # NEW FEATURE: 1 = Active, 0 = Archived
 
 class DailyEntry(Base):
     __tablename__ = 'entries'

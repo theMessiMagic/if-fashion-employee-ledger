@@ -8,24 +8,22 @@ from models import Session, Labour, DailyEntry, get_mirrored_shift, engine
 app = Flask(__name__)
 app.secret_key = "factory_fix_v24"
 
-# CHANGE YOUR PASSWORD HERE
 ADMIN_PASSWORD = "admin" 
 
 # NEW FEATURE SAFETY: Auto-add columns to existing DB safely
 with engine.connect() as conn:
-    try:
-        conn.execute(text("ALTER TABLE labours ADD COLUMN wage_rate INTEGER DEFAULT 0"))
-        conn.commit()
+    try: conn.execute(text("ALTER TABLE labours ADD COLUMN wage_rate INTEGER DEFAULT 0")); conn.commit()
     except: pass
-    try:
-        conn.execute(text("ALTER TABLE labours ADD COLUMN last_increment_month TEXT DEFAULT ''"))
-        conn.commit()
+    try: conn.execute(text("ALTER TABLE labours ADD COLUMN last_increment_month TEXT DEFAULT ''")); conn.commit()
+    except: pass
+    try: conn.execute(text("ALTER TABLE labours ADD COLUMN is_active INTEGER DEFAULT 1")); conn.commit()
     except: pass
 
 @app.route('/')
 def index():
     s = Session()
-    labours = s.query(Labour).all()
+    # ONLY load workers where is_active is 1
+    labours = s.query(Labour).filter_by(is_active=1).all()
     current_m_y = datetime.now().strftime("%m-%Y")
     s.close()
     return render_template('index.html', labours=labours, current_m_y=current_m_y)
@@ -105,21 +103,39 @@ def add_labour():
     s = Session()
     try:
         wage = int(request.form.get('wage', 0) or 0) 
+        # First check if worker exists but is archived
+        existing = s.query(Labour).filter_by(name=request.form['name'].upper()).first()
+        if existing:
+            if existing.is_active == 0:
+                flash(f"⚠️ {existing.name} is in the Archive! Please restore them from the Archive page.")
+            else:
+                flash(f"⚠️ Worker {existing.name} already exists!")
+            return redirect('/')
+
         s.add(Labour(name=request.form['name'].upper(), group=request.form['group'], home_mc=request.form['mc'], wage_rate=wage))
         s.commit()
         flash(f"Added worker: {request.form['name'].upper()}")
     except IntegrityError:
         s.rollback()
-        flash(f"Error: A worker named {request.form['name'].upper()} already exists!")
+        flash(f"Error: Database constraint failed.")
     finally: s.close()
     return redirect('/')
 
-@app.route('/delete_labour/<int:lid>')
+# UPDATE: Turn Delete into Archive (Preserves records)
+@app.route('/delete_labour/<int:lid>', methods=['POST'])
 def delete_labour(lid):
     s = Session()
     try:
-        s.query(DailyEntry).filter_by(labour_id=lid).delete()
-        lab = s.query(Labour).get(lid); s.delete(lab); s.commit()
+        password = request.form.get('password')
+        if password != ADMIN_PASSWORD:
+            flash("❌ Incorrect Admin Password! Action cancelled.")
+            return redirect('/')
+            
+        lab = s.query(Labour).get(lid)
+        if lab:
+            lab.is_active = 0 # Simply hide them, DO NOT delete records
+            s.commit()
+            flash(f"📦 Archived {lab.name} to preserve records.")
     finally: s.close()
     return redirect('/')
 
@@ -130,7 +146,8 @@ def bulk_print():
     m_y = request.args.get('m', now.strftime("%m-%Y"))
     req_month, req_year = map(int, m_y.split('-'))
     
-    labours = s.query(Labour).order_by(Labour.group, Labour.name).all()
+    # ONLY print active workers
+    labours = s.query(Labour).filter_by(is_active=1).order_by(Labour.group, Labour.name).all()
     all_data = []
     
     for labour in labours:
@@ -152,14 +169,13 @@ def update_wage(lid):
     s = Session()
     try:
         lab = s.query(Labour).get(lid)
-        if lab and lab.wage_rate == 0:  # Only allow if it's currently 0 (unlocked)
+        if lab and lab.wage_rate == 0:  
             lab.wage_rate = int(request.form.get('wage', 0))
             s.commit()
             flash(f"Initial Wage Locked for {lab.name}")
     finally: s.close()
     return redirect('/')
 
-# NEW FEATURE: Password Protected Monthly Increment
 @app.route('/increment_wage/<int:lid>', methods=['POST'])
 def increment_wage(lid):
     s = Session()
@@ -181,6 +197,32 @@ def increment_wage(lid):
             flash(f"✅ Incremented wage for {lab.name}. New Wage: ₹{lab.wage_rate}")
         else:
             flash(f"⚠️ {lab.name} already received an increment this month!")
+    finally: s.close()
+    return redirect('/')
+
+# NEW ROUTE: View Archived Workers
+@app.route('/archive')
+def archive():
+    s = Session()
+    archived_labours = s.query(Labour).filter_by(is_active=0).all()
+    s.close()
+    return render_template('archive.html', labours=archived_labours)
+
+# NEW ROUTE: Restore Worker from Archive
+@app.route('/restore_labour/<int:lid>', methods=['POST'])
+def restore_labour(lid):
+    s = Session()
+    try:
+        password = request.form.get('password')
+        if password != ADMIN_PASSWORD:
+            flash("❌ Incorrect Admin Password! Restore cancelled.")
+            return redirect('/archive')
+            
+        lab = s.query(Labour).get(lid)
+        if lab:
+            lab.is_active = 1
+            s.commit()
+            flash(f"✅ Restored {lab.name} back to Active Duty.")
     finally: s.close()
     return redirect('/')
 
